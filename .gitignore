@@ -1,0 +1,15 @@
+.venv/
+data/
+__pycache__/
+.DS_Store
+.env
+.env.*
+!.env.example
+# Local captures may include real customer data. Only docs/screenshots is publishable.
+/*-preview.png
+*.sqlite3
+*.sqlite3-*
+*.db
+*.pem
+*.key
+*.zip

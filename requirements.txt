@@ -1,0 +1,3 @@
+Pillow>=12.1,<13
+pywebpush==2.0.3
+cryptography>=46.0.7,<47

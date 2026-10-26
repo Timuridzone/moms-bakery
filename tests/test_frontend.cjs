@@ -1,0 +1,48 @@
+const vm=require('node:vm'), fs=require('node:fs'), assert=require('node:assert/strict');
+const elements=new Map();const element=()=>({innerHTML:'',textContent:'',classList:{add(){},remove(){}},showModal(){},close(){}});
+const store=new Map();const localStorage={getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)};
+const context=vm.createContext({localStorage,Intl,Date,Number,String,Math,JSON,Promise,encodeURIComponent,console,crypto:{getRandomValues:values=>require('node:crypto').webcrypto.getRandomValues(values)},location:{origin:'https://bakery.example',pathname:'/recover',hash:''},navigator:{},document:{querySelector(s){if(!elements.has(s))elements.set(s,element());return elements.get(s)},addEventListener(){}},window:{addEventListener(){}},setTimeout(){},fetch(){throw Error('Unexpected network call')}});
+vm.runInContext(fs.readFileSync('static/app.js','utf8').replace(/\ninit\(\);\s*$/,''),context);
+(async()=>{
+ // Match plain HTTP on a phone: randomUUID is unavailable at startup and in both forms.
+ assert.equal(context.crypto.randomUUID,undefined);
+ const keys=vm.runInContext('Array.from({length:100},()=>newRequestKey())',context);
+ assert.equal(new Set(keys).size,100);assert(keys.every(k=>/^[a-f0-9]{64}$/.test(k)));
+
+ vm.runInContext("pub={settings:{name:'Пекарня'}}; recoveryPage()",context);
+ assert(elements.get('#app').innerHTML.includes('Знайти моє замовлення'));
+ assert(!elements.get('#app').innerHTML.includes('type="email"'));
+ assert(elements.get('#app').innerHTML.includes('ще немає збережених'));
+ const token='a'.repeat(43);context.testToken=token;
+ assert.equal(vm.runInContext('rememberOrder(testToken,12)',context),true);
+ assert.equal(vm.runInContext('rememberOrder(testToken,12)',context),true);
+ assert.equal(vm.runInContext('savedOrders().length',context),1);
+ vm.runInContext('recoveryPage()',context);assert(elements.get('#app').innerHTML.includes('Замовлення №12'));
+ assert(elements.get('#app').innerHTML.includes('/status#'+token));
+ assert.equal(vm.runInContext("rememberOrder('<script>')",context),false);
+ const data=store.get('bakery.savedOrders.v1');assert(!data.includes('phone'));assert(!data.includes('email'));
+ vm.runInContext('forgetOrder(testToken)',context);assert.equal(vm.runInContext('savedOrders().length',context),0);
+ store.set('bakery.savedOrders.v1','invalid JSON');assert.equal(vm.runInContext('savedOrders().length',context),0);store.clear();
+ context.localStorage={getItem(){throw Error('blocked')},setItem(){throw Error('blocked')},removeItem(){throw Error('blocked')}};
+ assert.equal(vm.runInContext('rememberOrder(testToken)',context),false);vm.runInContext('recoveryPage()',context);assert(elements.get('#app').innerHTML.includes('не дозволяє'));
+ context.localStorage=localStorage;
+ context.navigator.share=async p=>{assert(p.url.endsWith('/status#secret'));};
+ await vm.runInContext("shareLink('https://bakery.example/status#secret')",context);
+ context.navigator.share=async()=>{const e=new Error();e.name='AbortError';throw e};elements.get('#modal').innerHTML='untouched';
+ await vm.runInContext("shareLink('https://bakery.example/status#secret')",context);assert.equal(elements.get('#modal').innerHTML,'untouched');
+ delete context.navigator.share;
+ await vm.runInContext("shareLink('https://bakery.example/status#secret')",context);
+ assert(elements.get('#modal').innerHTML.includes('viber://forward?text='));assert(elements.get('#modal').innerHTML.includes('Скопіювати посилання'));
+ const actions=vm.runInContext("trackingActions('secret')",context);assert(actions.includes('status#secret'));assert(actions.includes('особисте'));
+ await vm.runInContext("copy('https://bakery.example/status#secret')",context);assert(elements.get('#modal').innerHTML.includes('readonly'));
+ vm.runInContext("pub={today:'2026-10-23',settings:{name:'Пекарня',pickup:'Узгодимо'},products:[{id:7,name:'Тестовий десерт',photo:'/photo.jpg',price:15000,stock:3,description:'Приклад',pickup:'Узгодимо',ingredients_allergens:''}],gallery:[{id:2,name:'Робота',photos:['/gallery.jpg']}]}; openReserve(7)",context);
+ let form=elements.get('#modal').innerHTML;
+ assert(form.includes('Уточніть склад перед замовленням'));assert(form.includes('Склад та алергени'));assert(form.includes('змінити не можна'));assert(!form.includes('name="allergies"'));assert(!form.includes('name="diet"'));assert(!form.includes('name="email"'));assert(form.includes('custom-product'));
+ vm.runInContext("pub.products[0].ingredients_allergens='<test>\\nПеревірені дані';openReserve(7)",context);
+ assert(elements.get('#modal').innerHTML.includes('&lt;test&gt;'));assert(!elements.get('#modal').innerHTML.includes('<test>'));
+ vm.runInContext("openCustom(null,7)",context);form=elements.get('#modal').innerHTML;
+ assert(form.includes('data-product-inspiration="7"'));assert(form.includes('Тестовий десерт'));assert(form.includes('name="allergies"'));assert(form.includes('name="diet"'));assert(form.includes('не бронювання готового'));
+ vm.runInContext("openCustom(2)",context);assert(elements.get('#modal').innerHTML.includes('data-inspiration="2"'));
+ vm.runInContext("admin={products:pub.products};openProduct(7)",context);assert(elements.get('#modal').innerHTML.includes('name="ingredients_allergens"'));
+ console.log('Device recovery, blocked storage, ready-made/custom forms, owner ingredients, sharing and clipboard fallback checks passed.');
+})().catch(e=>{console.error(e);process.exitCode=1});
